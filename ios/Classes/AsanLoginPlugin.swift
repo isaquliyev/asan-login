@@ -39,23 +39,33 @@ public class AsanLoginPlugin: NSObject, FlutterPlugin {
     }
 
     private func performLogin(url: String, clientId: String, redirectUri: String, scope: String, sessionId: String, responseType: String) {
-        let loginUrl = getAsanUrl(url: url, clientId: clientId, redirectUri: redirectUri, scope: scope, sessionId: sessionId, responseType: responseType)
+    let loginUrl = getAsanUrl(url: url, clientId: clientId, redirectUri: redirectUri, scope: scope, sessionId: sessionId, responseType: responseType)
 
-      if let url = URL(string:loginUrl) {
-                  let vc = SFSafariViewController(url: url)
-                   if let topController = UIApplication.shared.windows.first(where: { $0.isKeyWindow })?.rootViewController {
-                              // Find the visible view controller
-                              var visibleController = topController
-                              while let presentedViewController = visibleController.presentedViewController {
-                                  visibleController = presentedViewController
-                              }
-                              vc.modalPresentationStyle = .pageSheet
-                              visibleController.present(vc, animated: true, completion: nil)
-                          } else {
-                              print("Failed to find topmost view controller")
-                          }
-              }
+    guard let url = URL(string: loginUrl) else {
+        print("Invalid URL")
+        return
     }
+
+    do {
+        let vc = SFSafariViewController(url: url)
+        guard let topController = UIApplication.shared.windows.first(where: { $0.isKeyWindow })?.rootViewController else {
+            throw NSError(domain: "AsanLoginPlugin", code: 0, userInfo: [NSLocalizedDescriptionKey: "No rootViewController found"])
+        }
+
+        // Find the visible controller
+        var visibleController = topController
+        while let presented = visibleController.presentedViewController {
+            visibleController = presented
+        }
+
+        vc.modalPresentationStyle = .pageSheet
+        visibleController.present(vc, animated: true, completion: nil)
+    } catch {
+        print("SafariViewController fallback due to error: \(error.localizedDescription)")
+        UIApplication.shared.open(url, options: [:], completionHandler: nil)
+    }
+}
+
 
     private func getAsanUrl(url: String, clientId: String, redirectUri: String, scope: String, sessionId: String, responseType: String) -> String {
         return "\(url)client_id=\(clientId)&redirect_uri=\(redirectUri)&response_type=\(responseType)&state=\(sessionId)&scope=\(scope)"
