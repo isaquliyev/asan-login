@@ -68,8 +68,20 @@ public class AsanLoginPlugin: NSObject, FlutterPlugin {
 
 
     private func getAsanUrl(url: String, clientId: String, redirectUri: String, scope: String, sessionId: String, responseType: String) -> String {
-        return "\(url)client_id=\(clientId)&redirect_uri=\(redirectUri)&response_type=\(responseType)&state=\(sessionId)&scope=\(scope)"
+    var urlWithDelimiter = url
+    if url.contains("?") {
+        if !url.hasSuffix("&") && !url.hasSuffix("?") {
+            urlWithDelimiter += "&"
+        }
+    } else {
+        urlWithDelimiter += "?"
     }
+
+    let encodedRedirectUri = redirectUri.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+    let encodedScope = scope.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+
+    return "\(urlWithDelimiter)client_id=\(clientId)&redirect_uri=\(encodedRedirectUri)&response_type=\(responseType)&state=\(sessionId)&scope=\(encodedScope)"
+}
 
     // Handle deep link when returning from the browser
     public func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey : Any] = [:]) -> Bool {
