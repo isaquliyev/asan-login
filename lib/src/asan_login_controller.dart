@@ -16,14 +16,31 @@ class AsanLoginController {
       _instance ??= AsanLoginController._();
 
   static const _channel = MethodChannel('asan_login');
-  final _asanCodeController = StreamController<String>();
+
+  StreamController<String> _asanCodeController =
+      StreamController<String>.broadcast();
 
   Stream<String> get asanCodeStream => _asanCodeController.stream;
 
+  String? _lastConsumedCode;
+
   Future<void> _handleMethodCall(MethodCall call) async {
-    if (call.method == 'onCodeReceived' && call.arguments != null) {
-      _asanCodeController.add(call.arguments);
+    if (call.method != 'onCodeReceived' || call.arguments == null) return;
+
+    final code = call.arguments as String;
+
+    if (code == _lastConsumedCode) {
+      logger.log('AsanLogin: duplicate code received, dropping.');
+      return;
     }
+
+    _lastConsumedCode = code;
+
+    if (_asanCodeController.isClosed) {
+      _asanCodeController = StreamController<String>.broadcast();
+    }
+
+    _asanCodeController.add(code);
   }
 
   Future<void> performLogin({
@@ -36,7 +53,7 @@ class AsanLoginController {
   }) async {
     try {
       final sessionId = UuidHelper.generateUuid();
-      logger.log('UUID: $sessionId');
+      logger.log('AsanLogin: starting login with UUID: $sessionId');
       await _channel.invokeMethod(
         'performLogin',
         {
@@ -50,8 +67,17 @@ class AsanLoginController {
         },
       );
     } on PlatformException catch (e) {
-      logger.log('Failed to perform login: ${e.message}');
+      logger.log('AsanLogin: failed to perform login: ${e.message}');
     }
+  }
+
+  void reset() {
+    logger.log('AsanLogin: resetting controller.');
+    _lastConsumedCode = null;
+    if (!_asanCodeController.isClosed) {
+      _asanCodeController.close();
+    }
+    _asanCodeController = StreamController<String>.broadcast();
   }
 
   void dispose() => _asanCodeController.close();
