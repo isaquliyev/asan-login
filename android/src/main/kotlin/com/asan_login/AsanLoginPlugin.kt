@@ -1,8 +1,10 @@
 package com.asan_login
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import az.gov.etabib.AsanLoginBridge
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -10,19 +12,17 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
-import io.flutter.plugin.common.PluginRegistry
 
-class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
-    PluginRegistry.NewIntentListener {
+class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
 
     private lateinit var channel: MethodChannel
     private var activity: Activity? = null
-    private var activityBinding: ActivityPluginBinding? = null
 
     companion object {
         const val CHANNEL = "asan_login"
+        private const val PREFS = "asan_login_prefs"
+        private const val KEY_SCHEME = "scheme"
 
-        private var scheme: String? = null
         private var codeConsumed = false
         private var lastConsumedCode: String? = null
     }
@@ -30,46 +30,43 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel = MethodChannel(binding.binaryMessenger, CHANNEL)
         channel.setMethodCallHandler(this)
+
+        // Connect to MainActivity via bridge
+        // If MainActivity already parked a pending intent, the bridge setter fires it immediately
+        AsanLoginBridge.onNewIntent = { intent -> processIntent(intent) }
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
+        AsanLoginBridge.onNewIntent = null
     }
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         activity = binding.activity
-        activityBinding = binding
-        binding.addOnNewIntentListener(this)
-        // Handle the case where the app was cold-started via the deep link
-        activity?.intent?.let { processIntent(it) }
     }
 
     override fun onDetachedFromActivity() {
-        activityBinding?.removeOnNewIntentListener(this)
-        activityBinding = null
         activity = null
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
-        activityBinding?.removeOnNewIntentListener(this)
-        activityBinding = null
         activity = null
     }
 
     override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
         activity = binding.activity
-        activityBinding = binding
-        binding.addOnNewIntentListener(this)
-    }
-
-    override fun onNewIntent(intent: Intent): Boolean {
-        processIntent(intent)
-        return true
     }
 
     override fun onMethodCall(call: MethodCall, result: Result) {
         if (call.method == "performLogin") {
-            scheme = call.argument<String>("scheme")
+            val scheme = call.argument<String>("scheme")
+
+            // Persist scheme so it survives process death
+            activity?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                ?.edit()
+                ?.putString(KEY_SCHEME, scheme)
+                ?.apply()
+
             codeConsumed = false
             lastConsumedCode = null
 
@@ -114,9 +111,13 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
     }
 
     private fun processIntent(intent: Intent) {
-        val data = intent.data
+        val data = intent.data ?: return
 
-        if (data == null || scheme == null || data.scheme != scheme) return
+        // Try in-memory scheme first, fall back to persisted value for process death case
+        val resolvedScheme = activity?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            ?.getString(KEY_SCHEME, null)
+
+        if (resolvedScheme == null || data.scheme != resolvedScheme) return
 
         val code = data.getQueryParameter("code") ?: return
 
@@ -125,6 +126,7 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
 
         codeConsumed = true
         lastConsumedCode = code
+
         channel.invokeMethod("onCodeReceived", code)
     }
 }
