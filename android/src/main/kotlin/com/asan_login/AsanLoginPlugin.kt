@@ -13,7 +13,7 @@ import android.app.Activity
 
 class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     private lateinit var channel: MethodChannel
-    private lateinit var scheme: String
+    private var scheme: String? = null
     private var activity: Activity? = null
 
     companion object {
@@ -58,7 +58,7 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             val scope = call.argument<String>("scope")?: ""
             val sessionId = call.argument<String>("sessionId")?: ""
             val responseType = call.argument<String>("responseType")?: ""
-            scheme = call.argument<String>("scheme")?: ""
+            scheme = call.argument<String>("scheme")
 
             performLogin(url, clientId, redirectUri, scope, sessionId, responseType)
             result.success(null)
@@ -81,7 +81,7 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     // Handle the deep link when the app returns from the browser
     private fun handleNewIntent(intent: Intent) {
         val data = intent.data
-        if (data != null && data.scheme == scheme) { 
+        if (data != null && scheme != null && data.scheme == scheme) { 
             val code = data.getQueryParameter("code")
             if (code != null) {
                 channel.invokeMethod("onCodeReceived", code)
