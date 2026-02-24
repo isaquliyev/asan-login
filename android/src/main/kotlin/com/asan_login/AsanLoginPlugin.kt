@@ -18,6 +18,9 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     private var codeConsumed = false
     private var lastConsumedCode: String? = null
 
+    // Store reference so we can remove it later
+    private var newIntentListener: ((Intent) -> Boolean)? = null
+
     companion object {
         const val CHANNEL = "asan_login"
     }
@@ -33,22 +36,36 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         activity = binding.activity
-        binding.addOnNewIntentListener { intent ->
+
+        // Create listener and store reference
+        val listener: (Intent) -> Boolean = { intent ->
             handleNewIntent(intent)
             true
         }
+        newIntentListener = listener
+        binding.addOnNewIntentListener(listener)
     }
 
     override fun onDetachedFromActivity() {
         activity = null
+        newIntentListener = null
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
         activity = null
+        newIntentListener = null
     }
 
     override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
         activity = binding.activity
+
+        // Re-register fresh listener
+        val listener: (Intent) -> Boolean = { intent ->
+            handleNewIntent(intent)
+            true
+        }
+        newIntentListener = listener
+        binding.addOnNewIntentListener(listener)
     }
 
     override fun onMethodCall(call: MethodCall, result: Result) {
@@ -61,7 +78,6 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             val responseType = call.argument<String>("responseType") ?: ""
             scheme = call.argument<String>("scheme")
 
-            // Reset consumed state for each new login attempt
             codeConsumed = false
             lastConsumedCode = null
 
@@ -105,10 +121,7 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
 
         val code = data.getQueryParameter("code") ?: return
 
-        // Guard 1: flag — blocks any second intent delivery for this login session
         if (codeConsumed) return
-
-        // Guard 2: value — blocks same code arriving through any other path
         if (code == lastConsumedCode) return
 
         codeConsumed = true
