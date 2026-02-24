@@ -10,50 +10,61 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
+import io.flutter.plugin.common.PluginRegistry
 
-class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
+class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware,
+    PluginRegistry.NewIntentListener {
 
     private lateinit var channel: MethodChannel
     private var activity: Activity? = null
+    private var activityBinding: ActivityPluginBinding? = null
 
     companion object {
         const val CHANNEL = "asan_login"
 
-        private var instance: AsanLoginPlugin? = null
         private var scheme: String? = null
         private var codeConsumed = false
         private var lastConsumedCode: String? = null
-
-        fun handleIntent(intent: Intent) {
-            instance?.processIntent(intent)
-        }
     }
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel = MethodChannel(binding.binaryMessenger, CHANNEL)
         channel.setMethodCallHandler(this)
-        instance = this
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
-        instance = null
     }
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         activity = binding.activity
+        activityBinding = binding
+        binding.addOnNewIntentListener(this)
+        // Handle the case where the app was cold-started via the deep link
+        activity?.intent?.let { processIntent(it) }
     }
 
     override fun onDetachedFromActivity() {
+        activityBinding?.removeOnNewIntentListener(this)
+        activityBinding = null
         activity = null
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
+        activityBinding?.removeOnNewIntentListener(this)
+        activityBinding = null
         activity = null
     }
 
     override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
         activity = binding.activity
+        activityBinding = binding
+        binding.addOnNewIntentListener(this)
+    }
+
+    override fun onNewIntent(intent: Intent): Boolean {
+        processIntent(intent)
+        return true
     }
 
     override fun onMethodCall(call: MethodCall, result: Result) {
