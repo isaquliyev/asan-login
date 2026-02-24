@@ -16,12 +16,15 @@ class AsanLoginController {
       _instance ??= AsanLoginController._();
 
   static const _channel = MethodChannel('asan_login');
-  final _asanCodeController = StreamController<String>();
 
+  StreamController<String> _asanCodeController = StreamController<String>.broadcast();
   Stream<String> get asanCodeStream => _asanCodeController.stream;
 
   Future<void> _handleMethodCall(MethodCall call) async {
     if (call.method == 'onCodeReceived' && call.arguments != null) {
+      if (_asanCodeController.isClosed) {
+        _asanCodeController = StreamController<String>.broadcast();
+      }
       _asanCodeController.add(call.arguments);
     }
   }
@@ -52,6 +55,13 @@ class AsanLoginController {
     } on PlatformException catch (e) {
       logger.log('Failed to perform login: ${e.message}');
     }
+  }
+
+  void reset() {
+    if (!_asanCodeController.isClosed) {
+      _asanCodeController.close();
+    }
+    _asanCodeController = StreamController<String>.broadcast();
   }
 
   void dispose() => _asanCodeController.close();
