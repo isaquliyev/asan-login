@@ -50,7 +50,6 @@ class AsanLoginController {
     String responseType = 'code',
     required String scheme,
   }) async {
-    reset();
     try {
       final sessionId = UuidHelper.generateUuid();
       logger.log('AsanLogin: starting login with UUID: $sessionId');
