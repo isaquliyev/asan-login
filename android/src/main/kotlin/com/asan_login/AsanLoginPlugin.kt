@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import com.asan_login.AsanLoginBridge
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
@@ -29,12 +30,12 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     }
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        Log.d("AsanLogin", "onAttachedToEngine called")
         appContext = binding.applicationContext
         channel = MethodChannel(binding.binaryMessenger, CHANNEL)
         channel.setMethodCallHandler(this)
 
-        // Connect to MainActivity via bridge
-        // If MainActivity already parked a pending intent, the bridge setter fires it immediately
+        Log.d("AsanLogin", "Setting bridge callback, pendingIntent=${AsanLoginBridge.pendingIntent?.data}")
         AsanLoginBridge.onNewIntent = { intent -> processIntent(intent) }
     }
 
@@ -60,14 +61,17 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     }
 
     override fun onMethodCall(call: MethodCall, result: Result) {
+        Log.d("AsanLogin", "onMethodCall: ${call.method}")
         if (call.method == "performLogin") {
             val scheme = call.argument<String>("scheme")
+            Log.d("AsanLogin", "performLogin called with scheme=$scheme")
 
             // Persist scheme so it survives process death
             appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .edit()
                 .putString(KEY_SCHEME, scheme)
                 .apply()
+            Log.d("AsanLogin", "Scheme saved to SharedPreferences")
 
             codeConsumed = false
             lastConsumedCode = null
@@ -79,6 +83,7 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             val sessionId = call.argument<String>("sessionId") ?: ""
             val responseType = call.argument<String>("responseType") ?: ""
 
+            Log.d("AsanLogin", "Calling performLogin with redirectUri=$redirectUri")
             performLogin(url, clientId, redirectUri, scope, sessionId, responseType)
             result.success(null)
         } else {
@@ -113,22 +118,43 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     }
 
     private fun processIntent(intent: Intent) {
-        val data = intent.data ?: return
+        Log.d("AsanLogin", "processIntent called")
+        val data = intent.data
+        Log.d("AsanLogin", "intent.data = $data")
+        if (data == null) {
+            Log.d("AsanLogin", "Returning: data is null")
+            return
+        }
 
-        // Use applicationContext (always available) instead of activity (may be null during onNewIntent)
         val resolvedScheme = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString(KEY_SCHEME, null)
+        Log.d("AsanLogin", "resolvedScheme=$resolvedScheme, data.scheme=${data.scheme}")
 
-        if (resolvedScheme == null || data.scheme != resolvedScheme) return
+        if (resolvedScheme == null || data.scheme != resolvedScheme) {
+            Log.d("AsanLogin", "Returning: scheme mismatch or null")
+            return
+        }
 
-        val code = data.getQueryParameter("code") ?: return
+        val code = data.getQueryParameter("code")
+        Log.d("AsanLogin", "code=$code")
+        if (code == null) {
+            Log.d("AsanLogin", "Returning: code is null")
+            return
+        }
 
-        if (codeConsumed) return
-        if (code == lastConsumedCode) return
+        Log.d("AsanLogin", "codeConsumed=$codeConsumed, lastConsumedCode=$lastConsumedCode")
+        if (codeConsumed) {
+            Log.d("AsanLogin", "Returning: code already consumed")
+            return
+        }
+        if (code == lastConsumedCode) {
+            Log.d("AsanLogin", "Returning: duplicate code")
+            return
+        }
 
         codeConsumed = true
         lastConsumedCode = code
-
+        Log.d("AsanLogin", "Invoking onCodeReceived with code")
         channel.invokeMethod("onCodeReceived", code)
     }
 }

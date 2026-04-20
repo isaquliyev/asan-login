@@ -7,13 +7,18 @@ import 'helpers/uuid_helper.dart';
 
 class AsanLoginController {
   AsanLoginController._() {
+    logger.log('AsanLogin: Controller created, setting up method call handler');
     _channel.setMethodCallHandler(_handleMethodCall);
   }
 
   static AsanLoginController? _instance;
 
-  static AsanLoginController get instance =>
-      _instance ??= AsanLoginController._();
+  static AsanLoginController get instance {
+    if (_instance == null) {
+      logger.log('AsanLogin: Creating new controller instance');
+    }
+    return _instance ??= AsanLoginController._();
+  }
 
   static const _channel = MethodChannel('asan_login');
 
@@ -24,9 +29,14 @@ class AsanLoginController {
   String? _lastConsumedCode;
 
   Future<void> _handleMethodCall(MethodCall call) async {
-    if (call.method != 'onCodeReceived' || call.arguments == null) return;
+    logger.log('AsanLogin: _handleMethodCall received: ${call.method}');
+    if (call.method != 'onCodeReceived' || call.arguments == null) {
+      logger.log('AsanLogin: Ignoring call (not onCodeReceived or null args)');
+      return;
+    }
 
     final code = call.arguments as String;
+    logger.log('AsanLogin: Received code: ${code.substring(0, code.length > 10 ? 10 : code.length)}...');
 
     if (code == _lastConsumedCode) {
       logger.log('AsanLogin: duplicate code received, dropping.');
@@ -34,12 +44,16 @@ class AsanLoginController {
     }
 
     _lastConsumedCode = code;
+    logger.log('AsanLogin: _asanCodeSubject.isClosed = ${_asanCodeSubject.isClosed}');
 
     if (_asanCodeSubject.isClosed) {
+      logger.log('AsanLogin: Subject was closed, creating new one');
       _asanCodeSubject = ReplaySubject<String>(maxSize: 1);
     }
 
+    logger.log('AsanLogin: Adding code to subject');
     _asanCodeSubject.add(code);
+    logger.log('AsanLogin: Code added to subject successfully');
   }
 
   Future<void> performLogin({
