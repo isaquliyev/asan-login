@@ -16,6 +16,7 @@ import io.flutter.plugin.common.MethodChannel.Result
 class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
 
     private lateinit var channel: MethodChannel
+    private lateinit var appContext: Context
     private var activity: Activity? = null
 
     companion object {
@@ -28,6 +29,7 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     }
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        appContext = binding.applicationContext
         channel = MethodChannel(binding.binaryMessenger, CHANNEL)
         channel.setMethodCallHandler(this)
 
@@ -62,10 +64,10 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             val scheme = call.argument<String>("scheme")
 
             // Persist scheme so it survives process death
-            activity?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                ?.edit()
-                ?.putString(KEY_SCHEME, scheme)
-                ?.apply()
+            appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putString(KEY_SCHEME, scheme)
+                .apply()
 
             codeConsumed = false
             lastConsumedCode = null
@@ -113,9 +115,9 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     private fun processIntent(intent: Intent) {
         val data = intent.data ?: return
 
-        // Try in-memory scheme first, fall back to persisted value for process death case
-        val resolvedScheme = activity?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            ?.getString(KEY_SCHEME, null)
+        // Use applicationContext (always available) instead of activity (may be null during onNewIntent)
+        val resolvedScheme = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_SCHEME, null)
 
         if (resolvedScheme == null || data.scheme != resolvedScheme) return
 
