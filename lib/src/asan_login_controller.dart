@@ -1,7 +1,7 @@
-import 'dart:async';
 import 'dart:developer' as logger;
 
 import 'package:flutter/services.dart';
+import 'package:rxdart/rxdart.dart';
 
 import 'helpers/uuid_helper.dart';
 
@@ -17,10 +17,9 @@ class AsanLoginController {
 
   static const _channel = MethodChannel('asan_login');
 
-  StreamController<String> _asanCodeController =
-      StreamController<String>.broadcast();
+  ReplaySubject<String> _asanCodeSubject = ReplaySubject<String>(maxSize: 1);
 
-  Stream<String> get asanCodeStream => _asanCodeController.stream;
+  Stream<String> get asanCodeStream => _asanCodeSubject.stream;
 
   String? _lastConsumedCode;
 
@@ -36,11 +35,11 @@ class AsanLoginController {
 
     _lastConsumedCode = code;
 
-    if (_asanCodeController.isClosed) {
-      _asanCodeController = StreamController<String>.broadcast();
+    if (_asanCodeSubject.isClosed) {
+      _asanCodeSubject = ReplaySubject<String>(maxSize: 1);
     }
 
-    _asanCodeController.add(code);
+    _asanCodeSubject.add(code);
   }
 
   Future<void> performLogin({
@@ -51,6 +50,7 @@ class AsanLoginController {
     String responseType = 'code',
     required String scheme,
   }) async {
+    reset();
     try {
       final sessionId = UuidHelper.generateUuid();
       logger.log('AsanLogin: starting login with UUID: $sessionId');
@@ -74,11 +74,11 @@ class AsanLoginController {
   void reset() {
     logger.log('AsanLogin: resetting controller.');
     _lastConsumedCode = null;
-    if (!_asanCodeController.isClosed) {
-      _asanCodeController.close();
+    if (!_asanCodeSubject.isClosed) {
+      _asanCodeSubject.close();
     }
-    _asanCodeController = StreamController<String>.broadcast();
+    _asanCodeSubject = ReplaySubject<String>(maxSize: 1);
   }
 
-  void dispose() => _asanCodeController.close();
+  void dispose() => _asanCodeSubject.close();
 }
