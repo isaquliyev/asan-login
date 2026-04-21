@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import com.asan_login.AsanLoginBridge
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -29,7 +31,11 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
 
         private var codeConsumed = false
         private var lastConsumedCode: String? = null
+        private var pendingCallbackMethod: String? = null
+        private var pendingCallbackPayload: String? = null
     }
+
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         Log.d("AsanLogin", "onAttachedToEngine called")
@@ -39,6 +45,7 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
 
         Log.d("AsanLogin", "Setting bridge callback, pendingIntent=${AsanLoginBridge.pendingIntent?.data}")
         AsanLoginBridge.onNewIntent = { intent -> processIntent(intent) }
+        flushPendingCallback()
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
@@ -163,7 +170,7 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 }
             }
             Log.d("AsanLogin", "Login callback returned error=$errorPayload")
-            channel.invokeMethod("onLoginError", errorPayload)
+            queueCallback("onLoginError", errorPayload)
             return
         }
 
@@ -171,7 +178,7 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         Log.d("AsanLogin", "code(from query/fragment)=$code")
         if (code.isNullOrBlank()) {
             Log.d("AsanLogin", "Returning: code is null or blank")
-            channel.invokeMethod("onLoginError", "code_missing")
+            queueCallback("onLoginError", "code_missing")
             return
         }
 
@@ -188,7 +195,7 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         codeConsumed = true
         lastConsumedCode = code
         Log.d("AsanLogin", "Invoking onCodeReceived with code")
-        channel.invokeMethod("onCodeReceived", code)
+        queueCallback("onCodeReceived", code)
     }
 
     private fun getParamFromFragment(fragment: String?, key: String): String? {
@@ -202,5 +209,61 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                     URLDecoder.decode(parts.getOrNull(1).orEmpty(), "UTF-8")
                 }
             }
+    }
+
+    private fun queueCallback(method: String, payload: String) {
+        pendingCallbackMethod = method
+        pendingCallbackPayload = payload
+        flushPendingCallback()
+    }
+
+    private fun flushPendingCallback() {
+        val method = pendingCallbackMethod ?: return
+        val payload = pendingCallbackPayload
+        if (payload == null) {
+            pendingCallbackMethod = null
+            return
+        }
+        deliverToDart(method, payload, 0)
+    }
+
+    private fun deliverToDart(method: String, payload: String, attempt: Int) {
+        mainHandler.post {
+            Log.d("AsanLogin", "Delivering callback to Dart method=$method attempt=$attempt")
+            channel.invokeMethod(method, payload, object : Result {
+                override fun success(result: Any?) {
+                    Log.d("AsanLogin", "Dart callback acked for method=$method")
+                    clearPending(method, payload)
+                }
+
+                override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
+                    Log.d(
+                        "AsanLogin",
+                        "Dart callback error method=$method code=$errorCode message=$errorMessage"
+                    )
+                    retryDelivery(method, payload, attempt)
+                }
+
+                override fun notImplemented() {
+                    Log.d("AsanLogin", "Dart callback not implemented for method=$method")
+                    retryDelivery(method, payload, attempt)
+                }
+            })
+        }
+    }
+
+    private fun retryDelivery(method: String, payload: String, attempt: Int) {
+        if (attempt >= 5) {
+            Log.d("AsanLogin", "Giving up callback delivery after retries for method=$method")
+            return
+        }
+        mainHandler.postDelayed({ deliverToDart(method, payload, attempt + 1) }, 350L)
+    }
+
+    private fun clearPending(method: String, payload: String) {
+        if (pendingCallbackMethod == method && pendingCallbackPayload == payload) {
+            pendingCallbackMethod = null
+            pendingCallbackPayload = null
+        }
     }
 }
