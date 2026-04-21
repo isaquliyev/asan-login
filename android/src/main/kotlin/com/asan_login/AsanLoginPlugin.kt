@@ -23,6 +23,7 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     private lateinit var channel: MethodChannel
     private lateinit var appContext: Context
     private var activity: Activity? = null
+    private val bridgeIntentHandler: (Intent) -> Unit = { intent -> processIntent(intent) }
 
     companion object {
         const val CHANNEL = "asan_login"
@@ -46,31 +47,42 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         appContext = binding.applicationContext
         channel = MethodChannel(binding.binaryMessenger, CHANNEL)
         channel.setMethodCallHandler(this)
-
-        Log.d("AsanLogin", "Setting bridge callback, pendingIntent=${AsanLoginBridge.pendingIntent?.data}")
-        AsanLoginBridge.onNewIntent = { intent -> processIntent(intent) }
-        flushPendingCallback()
+        Log.d("AsanLogin", "Engine attached. Bridge callback will be bound on Activity attach.")
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
-        AsanLoginBridge.onNewIntent = null
+        Log.d("AsanLogin", "Engine detached.")
     }
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         activity = binding.activity
+        Log.d("AsanLogin", "onAttachedToActivity: binding bridge callback, pendingIntent=${AsanLoginBridge.pendingIntent?.data}")
+        AsanLoginBridge.onNewIntent = bridgeIntentHandler
+        flushPendingCallback()
     }
 
     override fun onDetachedFromActivity() {
+        if (AsanLoginBridge.onNewIntent === bridgeIntentHandler) {
+            AsanLoginBridge.onNewIntent = null
+            Log.d("AsanLogin", "onDetachedFromActivity: bridge callback cleared")
+        }
         activity = null
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
+        if (AsanLoginBridge.onNewIntent === bridgeIntentHandler) {
+            AsanLoginBridge.onNewIntent = null
+            Log.d("AsanLogin", "onDetachedFromActivityForConfigChanges: bridge callback cleared")
+        }
         activity = null
     }
 
     override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
         activity = binding.activity
+        Log.d("AsanLogin", "onReattachedToActivityForConfigChanges: binding bridge callback")
+        AsanLoginBridge.onNewIntent = bridgeIntentHandler
+        flushPendingCallback()
     }
 
     override fun onMethodCall(call: MethodCall, result: Result) {
