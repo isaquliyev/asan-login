@@ -30,8 +30,15 @@ class AsanLoginController {
 
   Future<void> _handleMethodCall(MethodCall call) async {
     logger.log('AsanLogin: _handleMethodCall received: ${call.method}');
+    if (call.method == 'onLoginError') {
+      final errorMessage = (call.arguments as String?) ?? 'unknown_login_error';
+      logger.log('AsanLogin: Login callback error: $errorMessage');
+      _asanCodeSubject.addError(Exception(errorMessage));
+      return;
+    }
+
     if (call.method != 'onCodeReceived' || call.arguments == null) {
-      logger.log('AsanLogin: Ignoring call (not onCodeReceived or null args)');
+      logger.log('AsanLogin: Ignoring call (unsupported method or null args)');
       return;
     }
 
@@ -66,6 +73,7 @@ class AsanLoginController {
   }) async {
     try {
       final sessionId = UuidHelper.generateUuid();
+      _lastConsumedCode = null;
       logger.log('AsanLogin: starting login with UUID: $sessionId');
       await _channel.invokeMethod(
         'performLogin',

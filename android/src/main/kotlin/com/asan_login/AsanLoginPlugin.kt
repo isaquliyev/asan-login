@@ -13,6 +13,8 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
+import java.net.URLDecoder
+import java.net.URLEncoder
 
 class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
 
@@ -114,7 +116,15 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         sessionId: String,
         responseType: String
     ): String {
-        return "${url}client_id=$clientId&redirect_uri=$redirectUri&response_type=$responseType&state=$sessionId&scope=$scope"
+        val urlWithDelimiter = when {
+            url.contains("?") && (url.endsWith("&") || url.endsWith("?")) -> url
+            url.contains("?") -> "$url&"
+            else -> "$url?"
+        }
+        val encodedRedirectUri = URLEncoder.encode(redirectUri, "UTF-8")
+        val encodedScope = URLEncoder.encode(scope, "UTF-8")
+
+        return "${urlWithDelimiter}client_id=$clientId&redirect_uri=$encodedRedirectUri&response_type=$responseType&state=$sessionId&scope=$encodedScope"
     }
 
     private fun processIntent(intent: Intent) {
@@ -135,10 +145,33 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             return
         }
 
-        val code = data.getQueryParameter("code")
-        Log.d("AsanLogin", "code=$code")
-        if (code == null) {
-            Log.d("AsanLogin", "Returning: code is null")
+        val fragment = data.fragment
+        val allQueryParams = data.queryParameterNames.associateWith { key ->
+            data.getQueryParameter(key)
+        }
+        Log.d("AsanLogin", "queryParams=$allQueryParams, fragment=$fragment")
+
+        val error = data.getQueryParameter("error") ?: getParamFromFragment(fragment, "error")
+        val errorDescription = data.getQueryParameter("error_description")
+            ?: getParamFromFragment(fragment, "error_description")
+        if (error != null) {
+            val errorPayload = buildString {
+                append(error)
+                if (!errorDescription.isNullOrBlank()) {
+                    append(": ")
+                    append(errorDescription)
+                }
+            }
+            Log.d("AsanLogin", "Login callback returned error=$errorPayload")
+            channel.invokeMethod("onLoginError", errorPayload)
+            return
+        }
+
+        val code = data.getQueryParameter("code") ?: getParamFromFragment(fragment, "code")
+        Log.d("AsanLogin", "code(from query/fragment)=$code")
+        if (code.isNullOrBlank()) {
+            Log.d("AsanLogin", "Returning: code is null or blank")
+            channel.invokeMethod("onLoginError", "code_missing")
             return
         }
 
@@ -156,5 +189,18 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         lastConsumedCode = code
         Log.d("AsanLogin", "Invoking onCodeReceived with code")
         channel.invokeMethod("onCodeReceived", code)
+    }
+
+    private fun getParamFromFragment(fragment: String?, key: String): String? {
+        if (fragment.isNullOrBlank()) return null
+        return fragment.split("&")
+            .firstNotNullOfOrNull { pair ->
+                val parts = pair.split("=", limit = 2)
+                if (parts.isEmpty() || parts[0] != key) {
+                    null
+                } else {
+                    URLDecoder.decode(parts.getOrNull(1).orEmpty(), "UTF-8")
+                }
+            }
     }
 }
