@@ -28,11 +28,15 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         const val CHANNEL = "asan_login"
         private const val PREFS = "asan_login_prefs"
         private const val KEY_SCHEME = "scheme"
+        private const val DELIVERY_TIMEOUT_MS = 600L
+        private const val MAX_DELIVERY_RETRY = 5
 
-        private var codeConsumed = false
-        private var lastConsumedCode: String? = null
+        private var pendingCode: String? = null
+        private var ackedCode: String? = null
         private var pendingCallbackMethod: String? = null
         private var pendingCallbackPayload: String? = null
+        private var activeDeliveryToken: Long = 0L
+        private var deliverySequence: Long = 0L
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -82,8 +86,11 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 .apply()
             Log.d("AsanLogin", "Scheme saved to SharedPreferences")
 
-            codeConsumed = false
-            lastConsumedCode = null
+            pendingCode = null
+            ackedCode = null
+            pendingCallbackMethod = null
+            pendingCallbackPayload = null
+            activeDeliveryToken = 0L
 
             val url = call.argument<String>("url") ?: ""
             val clientId = call.argument<String>("clientId") ?: ""
@@ -182,18 +189,22 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             return
         }
 
-        Log.d("AsanLogin", "codeConsumed=$codeConsumed, lastConsumedCode=$lastConsumedCode")
-        if (codeConsumed) {
-            Log.d("AsanLogin", "Returning: code already consumed")
-            return
-        }
-        if (code == lastConsumedCode) {
-            Log.d("AsanLogin", "Returning: duplicate code")
+        Log.d("AsanLogin", "pendingCode=$pendingCode, ackedCode=$ackedCode")
+        if (code == ackedCode) {
+            Log.d("AsanLogin", "Returning: code already acked")
             return
         }
 
-        codeConsumed = true
-        lastConsumedCode = code
+        if (code == pendingCode) {
+            Log.d("AsanLogin", "Duplicate code is pending ack; forcing re-delivery")
+            flushPendingCallback()
+            return
+        }
+
+        if (pendingCode != null && pendingCode != code) {
+            Log.d("AsanLogin", "Replacing unacked pendingCode=$pendingCode with new code")
+        }
+        pendingCode = code
         Log.d("AsanLogin", "Invoking onCodeReceived with code")
         queueCallback("onCodeReceived", code)
     }
@@ -229,14 +240,43 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
 
     private fun deliverToDart(method: String, payload: String, attempt: Int) {
         mainHandler.post {
+            if (!isStillPending(method, payload)) {
+                Log.d("AsanLogin", "Skip delivery: callback no longer pending for method=$method")
+                return@post
+            }
+
+            val deliveryToken = nextDeliveryToken()
+            activeDeliveryToken = deliveryToken
+            var callbackHandled = false
+
+            mainHandler.postDelayed({
+                if (!callbackHandled &&
+                    activeDeliveryToken == deliveryToken &&
+                    isStillPending(method, payload)
+                ) {
+                    Log.d("AsanLogin", "Delivery timed out for method=$method attempt=$attempt")
+                    retryDelivery(method, payload, attempt)
+                }
+            }, DELIVERY_TIMEOUT_MS)
+
             Log.d("AsanLogin", "Delivering callback to Dart method=$method attempt=$attempt")
             channel.invokeMethod(method, payload, object : Result {
                 override fun success(result: Any?) {
+                    if (callbackHandled) return
+                    callbackHandled = true
                     Log.d("AsanLogin", "Dart callback acked for method=$method")
+                    if (method == "onCodeReceived") {
+                        ackedCode = payload
+                        if (pendingCode == payload) {
+                            pendingCode = null
+                        }
+                    }
                     clearPending(method, payload)
                 }
 
                 override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
+                    if (callbackHandled) return
+                    callbackHandled = true
                     Log.d(
                         "AsanLogin",
                         "Dart callback error method=$method code=$errorCode message=$errorMessage"
@@ -245,6 +285,8 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 }
 
                 override fun notImplemented() {
+                    if (callbackHandled) return
+                    callbackHandled = true
                     Log.d("AsanLogin", "Dart callback not implemented for method=$method")
                     retryDelivery(method, payload, attempt)
                 }
@@ -253,7 +295,11 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     }
 
     private fun retryDelivery(method: String, payload: String, attempt: Int) {
-        if (attempt >= 5) {
+        if (!isStillPending(method, payload)) {
+            Log.d("AsanLogin", "Skip retry: callback no longer pending for method=$method")
+            return
+        }
+        if (attempt >= MAX_DELIVERY_RETRY) {
             Log.d("AsanLogin", "Giving up callback delivery after retries for method=$method")
             return
         }
@@ -264,6 +310,16 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         if (pendingCallbackMethod == method && pendingCallbackPayload == payload) {
             pendingCallbackMethod = null
             pendingCallbackPayload = null
+            activeDeliveryToken = 0L
         }
+    }
+
+    private fun isStillPending(method: String, payload: String): Boolean {
+        return pendingCallbackMethod == method && pendingCallbackPayload == payload
+    }
+
+    private fun nextDeliveryToken(): Long {
+        deliverySequence += 1L
+        return deliverySequence
     }
 }
