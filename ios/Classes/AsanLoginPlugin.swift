@@ -85,17 +85,37 @@ public class AsanLoginPlugin: NSObject, FlutterPlugin {
 
     // Handle deep link when returning from the browser
     public func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey : Any] = [:]) -> Bool {
-        if url.scheme == scheme {
-            if let code = url.queryItems?["code"] {
-                channel.invokeMethod("onCodeReceived", arguments: code)
-            }
-if let topController = UIApplication.shared.windows.first(where: { $0.isKeyWindow })?.rootViewController?.presentedViewController,
-           topController is SFSafariViewController {
-            topController.dismiss(animated: true, completion: nil)
-        }
+        guard url.scheme == scheme else { return false }
+
+        dismissSafariViewController()
+
+        let params = url.queryItems ?? [:]
+
+        if let error = params["error"] {
+            let description = params["error_description"] ?? ""
+            let payload = description.isEmpty ? error : "\(error): \(description)"
+            channel.invokeMethod("onLoginError", arguments: payload)
             return true
         }
-        return false
+
+        guard let code = params["code"], !code.isEmpty else {
+            channel.invokeMethod("onLoginError", arguments: "code_missing")
+            return true
+        }
+
+        channel.invokeMethod("onCodeReceived", arguments: code)
+        return true
+    }
+
+    private func dismissSafariViewController() {
+        guard let root = UIApplication.shared.windows.first(where: { $0.isKeyWindow })?.rootViewController else { return }
+        var visible = root
+        while let presented = visible.presentedViewController {
+            visible = presented
+        }
+        if visible is SFSafariViewController {
+            visible.dismiss(animated: true, completion: nil)
+        }
     }
 }
 

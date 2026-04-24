@@ -30,7 +30,7 @@ class AsanLoginPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         private const val PREFS = "asan_login_prefs"
         private const val KEY_SCHEME = "scheme"
         private const val DELIVERY_TIMEOUT_MS = 600L
-        private const val MAX_DELIVERY_RETRY = 5
+        private const val MAX_DELIVERY_RETRY = 2
 
         private var pendingCode: String? = null
         private var ackedCode: String? = null
